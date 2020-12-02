@@ -251,7 +251,7 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 		mountArgs,
 		"mount",
 		fmt.Sprintf("%s:%s", remote, remotePath),
-		targetPath
+		targetPath,
 	)
 
     env := os.Environ()
@@ -293,8 +293,8 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 
 	iterations := 0
 	for {
-	        klog.Infof("waiting for mountpoint targetpath=%s", targetPath)
-	        time.Sleep(1000 * time.Millisecond)
+	    klog.Infof("waiting for mountpoint targetpath=%s", targetPath)
+	    time.Sleep(1000 * time.Millisecond)
 		iterations = iterations + 1
 
 		// check if process is alive
@@ -311,8 +311,8 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 			}
 		}
 
-	        // check if mounted
-	        args := []string{"-q", targetPath}
+	    // check if mounted
+	    args := []string{"-q", targetPath}
 		cmd := exec.Command("/bin/mountpoint", args...)
 
 		var waitStatus syscall.WaitStatus
