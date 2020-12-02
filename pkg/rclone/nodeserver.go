@@ -246,16 +246,15 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 
 	// rclone mount remote:path /path/to/mountpoint [flags]
 
-        // mount not allowed to block
+    // mount not allowed to block
 	mountArgs = append(
 		mountArgs,
 		"mount",
 		fmt.Sprintf("%s:%s", remote, remotePath),
-		targetPath,
-		"--daemon",
+		targetPath
 	)
 
-        env := os.Environ()
+    env := os.Environ()
 
 	// Add default flags
 	for k, v := range defaultFlags {
