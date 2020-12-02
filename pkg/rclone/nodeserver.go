@@ -246,12 +246,13 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 
 	// rclone mount remote:path /path/to/mountpoint [flags]
 
-    // mount not allowed to block
+    // mount runs in foreground and started as process
 	mountArgs = append(
 		mountArgs,
 		"mount",
 		fmt.Sprintf("%s:%s", remote, remotePath),
 		targetPath,
+		"--daemon",
 	)
 
     env := os.Environ()
@@ -275,20 +276,15 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 		return err
 	}
 
-	klog.Infof("executing mount command cmd=%s, remote=:%s:%s, targetpath=%s", mountCmd, remote, remotePath, targetPath)
+	klog.Infof("executing mount command cmd=%s, remote=%s:%s, targetpath=%s", mountCmd, remote, remotePath, targetPath)
 
 	cmd := exec.Command(mountCmd, mountArgs...)
 	cmd.Env = env
 
-	var b bytes.Buffer
-	cmd.Stdout = &b
-	cmd.Stderr = &b
-
-	err = cmd.Start()
-	pid := cmd.Process.Pid
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("mounting failed: %v cmd: '%s' remote: '%s:%s' targetpath: %s",
-			err, mountCmd, remote, remotePath, targetPath)
+		return fmt.Errorf("mounting failed: %v cmd: '%s' remote: '%s:%s' targetpath: %s output: %q",
+			err, mountCmd, remote, remotePath, targetPath, string(out))
 	}
 
 	iterations := 0
@@ -297,19 +293,6 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 	    time.Sleep(1000 * time.Millisecond)
 		iterations = iterations + 1
 
-		// check if process is alive
-		process, err := os.FindProcess(int(pid))
-		if err != nil {
-			fmt.Printf("Failed to find process: %s\n", err)
-			return fmt.Errorf("mounting failed, process not found: %v cmd: '%s' remote: '%s:%s' targetpath: %s", err, mountCmd, remote, remotePath, targetPath)
-		} else {
-			err := process.Signal(syscall.Signal(0))
-			fmt.Printf("process.Signal on pid %d returned: %v\n", pid, err)
-
-			if(!(err == nil)) {
-				return fmt.Errorf("mounting failed, process died: %v cmd: '%s' remote: '%s:%s' targetpath: %s output: %q", err, mountCmd, remote, remotePath, targetPath, string(b.Bytes()))
-			}
-		}
 
 	    // check if mounted
 	    args := []string{"-q", targetPath}
@@ -320,7 +303,7 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 			// Did the command fail because of an unsuccessful exit code
 			if exitError, ok := err.(*exec.ExitError); ok {
 				waitStatus = exitError.Sys().(syscall.WaitStatus)
-				klog.Infof(fmt.Sprintf("%d", waitStatus.ExitStatus()))			
+				klog.Infof(fmt.Sprintf("%d", waitStatus.ExitStatus()))
 			}
 		} else {
 		    // Command was successful
