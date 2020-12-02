@@ -1,11 +1,14 @@
 package rclone
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+	"syscall"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,7 +106,7 @@ func extractFlags(volumeContext map[string]string, secret *v1.Secret) (string, s
 	flags := make(map[string]string)
 
 	// Secret values are default, gets merged and overriden by corresponding PV values
-	if secret !=nil && secret.Data != nil && len(secret.Data) > 0 {
+	if secret != nil && secret.Data != nil && len(secret.Data) > 0 {
 
 		// Needs byte to string casting for map values
 		for k, v := range secret.Data {
@@ -152,10 +155,10 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	if err != nil && !mount.IsCorruptedMnt(err) {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	
+
 	if notMnt && !mount.IsCorruptedMnt(err) {
 		klog.Infof("Volume not mounted")
-	
+
 	} else {
 		err = util.UnmountPath(req.GetTargetPath(), m)
 		if err != nil {
@@ -218,39 +221,53 @@ func getSecret(secretName string) (*v1.Secret, error) {
 	return secret, nil
 }
 
+func flagToEnvName(flag string) string {
+	// To find the name of the environment variable, first, take the long option name, strip the leading --, change - to _, make upper case and prepend RCLONE_.
+	flag = strings.ToUpper(flag)
+	flag = strings.ReplaceAll(flag, "-", "_")
+	return fmt.Sprintf("RCLONE_%s", flag)
+}
+
+func userFlagToEnvName(flag string) string {
+	// To find the name of the environment variable, first, take the long option name, strip the leading --, change - to _, make upper case and prepend RCLONE_.
+	flag = strings.ToUpper(flag)
+	flag = strings.ReplaceAll(flag, "-", "_")
+	return flag
+}
+
 // func Mount(params mountParams, target string, opts ...string) error {
 func Mount(remote string, remotePath string, targetPath string, flags map[string]string) error {
 	mountCmd := "rclone"
 	mountArgs := []string{}
 
 	defaultFlags := map[string]string{}
-	defaultFlags["cache-info-age"] = "72h"
-	defaultFlags["cache-chunk-clean-interval"] = "15m"
-	defaultFlags["dir-cache-time"] = "5s"
-	defaultFlags["vfs-cache-mode"] = "writes"
 	defaultFlags["allow-other"] = "true"
+	defaultFlags["allow-root"] = "true"
 
 	// rclone mount remote:path /path/to/mountpoint [flags]
 
+        // mount not allowed to block
 	mountArgs = append(
 		mountArgs,
 		"mount",
-		fmt.Sprintf(":%s:%s", remote, remotePath),
+		fmt.Sprintf("%s:%s", remote, remotePath),
 		targetPath,
 		"--daemon",
 	)
+
+        env := os.Environ()
 
 	// Add default flags
 	for k, v := range defaultFlags {
 		// Exclude overriden flags
 		if _, ok := flags[k]; !ok {
-			mountArgs = append(mountArgs, fmt.Sprintf("--%s=%s", k, v))
+			env = append(env, fmt.Sprintf("%s=%s", flagToEnvName(k), v))
 		}
 	}
 
 	// Add user supplied flags
 	for k, v := range flags {
-		mountArgs = append(mountArgs, fmt.Sprintf("--%s=%s", k, v))
+		env = append(env, fmt.Sprintf("%s=%s", userFlagToEnvName(k), v))
 	}
 
 	// create target, os.Mkdirall is noop if it exists
@@ -261,10 +278,65 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 
 	klog.Infof("executing mount command cmd=%s, remote=:%s:%s, targetpath=%s", mountCmd, remote, remotePath, targetPath)
 
-	out, err := exec.Command(mountCmd, mountArgs...).CombinedOutput()
+	cmd := exec.Command(mountCmd, mountArgs...)
+	cmd.Env = env
+
+	var b bytes.Buffer
+	cmd.Stdout = &b
+	cmd.Stderr = &b
+
+	err = cmd.Start()
+	pid := cmd.Process.Pid
 	if err != nil {
-		return fmt.Errorf("mounting failed: %v cmd: '%s' remote: ':%s:%s' targetpath: %s output: %q",
-			err, mountCmd, remote, remotePath, targetPath, string(out))
+		return fmt.Errorf("mounting failed: %v cmd: '%s' remote: '%s:%s' targetpath: %s",
+			err, mountCmd, remote, remotePath, targetPath)
+	}
+
+	iterations := 0
+	for {
+	        klog.Infof("waiting for mountpoint targetpath=%s", targetPath)
+	        time.Sleep(1000 * time.Millisecond)
+		iterations = iterations + 1
+
+		// check if process is alive
+		process, err := os.FindProcess(int(pid))
+		if err != nil {
+			fmt.Printf("Failed to find process: %s\n", err)
+			return fmt.Errorf("mounting failed, process not found: %v cmd: '%s' remote: '%s:%s' targetpath: %s", err, mountCmd, remote, remotePath, targetPath)
+		} else {
+			err := process.Signal(syscall.Signal(0))
+			fmt.Printf("process.Signal on pid %d returned: %v\n", pid, err)
+
+			if(!(err == nil)) {
+				return fmt.Errorf("mounting failed, process died: %v cmd: '%s' remote: '%s:%s' targetpath: %s output: %q", err, mountCmd, remote, remotePath, targetPath, string(b.Bytes()))
+			}
+		}
+
+	        // check if mounted
+	        args := []string{"-q", targetPath}
+		cmd := exec.Command("/bin/mountpoint", args...)
+
+		var waitStatus syscall.WaitStatus
+		if err := cmd.Run(); err != nil {
+			// Did the command fail because of an unsuccessful exit code
+			if exitError, ok := err.(*exec.ExitError); ok {
+				waitStatus = exitError.Sys().(syscall.WaitStatus)
+				klog.Infof(fmt.Sprintf("%d", waitStatus.ExitStatus()))			
+			}
+		} else {
+		    // Command was successful
+		    waitStatus = cmd.ProcessState.Sys().(syscall.WaitStatus)
+		    klog.Infof(fmt.Sprintf("%d", waitStatus.ExitStatus()))
+
+			klog.Infof("mountpoint ready targetpath=%s", targetPath)
+			return nil
+		}
+
+		if( iterations == 30) {
+			klog.Infof("mounting timed out targetpath=%s", targetPath)
+			return fmt.Errorf("mounting timed-out: %v cmd: '%s' remote: '%s:%s' targetpath: %s", err, mountCmd, remote, remotePath, targetPath)
+		}
+
 	}
 
 	return nil
