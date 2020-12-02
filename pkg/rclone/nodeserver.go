@@ -1,7 +1,6 @@
 package rclone
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
