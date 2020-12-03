@@ -19,7 +19,6 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/util/mount"
-	"k8s.io/kubernetes/pkg/volume/util"
 
 	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
 )
@@ -65,10 +64,16 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 			Exec:      mount.NewOsExec(),
 		}
 
-		if err := ns.mounter.Unmount(targetPath); err != nil {
+		//if err := ns.mounter.Unmount(targetPath); err != nil {
+		//	klog.Errorf("Unmount directory %s failed with %v", targetPath, err)
+		//	return nil, err
+		//}
+
+		if err := Unmount(targetPath); err != nil {
 			klog.Errorf("Unmount directory %s failed with %v", targetPath, err)
 			return nil, err
 		}
+
 	}
 
 	mountOptions := req.GetVolumeCapability().GetMount().GetMountFlags()
@@ -159,13 +164,18 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 		klog.Infof("Volume not mounted")
 
 	} else {
-		err = util.UnmountPath(req.GetTargetPath(), m)
-		if err != nil {
-			klog.Error("Error while unmounting path")
-			return nil, status.Error(codes.Internal, err.Error())
-		}
 
-		klog.Infof("Volume %s unmounted successfully", req.VolumeId)
+		//err = util.UnmountPath(req.GetTargetPath(), m)
+		//if err != nil {
+		//	klog.Error("Error while unmounting path")
+		//	return nil, status.Error(codes.Internal, err.Error())
+		//}
+
+		if err := Unmount(req.GetTargetPath()); err != nil {
+			klog.Errorf("Unmount directory %s failed with %v", targetPath, err)
+		} else {
+			klog.Infof("Volume %s unmounted successfully", req.VolumeId)
+		}
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
@@ -234,20 +244,49 @@ func userFlagToEnvName(flag string) string {
 	return flag
 }
 
+func Unmount(targetPath string) error {
+
+	// check if mounted
+	args := []string{"-u", "-z", targetPath}
+	cmd := exec.Command("/bin/fusermount", args...)
+
+	var waitStatus syscall.WaitStatus
+	if err := cmd.Run(); err != nil {
+		// Did the command fail because of an unsuccessful exit code
+		if exitError, ok := err.(*exec.ExitError); ok {
+			waitStatus = exitError.Sys().(syscall.WaitStatus)
+			klog.Infof(fmt.Sprintf("%d", waitStatus.ExitStatus()))
+			return fmt.Errorf("error unmounting targetpath: %s", targetPath)
+		}
+		return fmt.Errorf("error unmounting targetpath: %s", targetPath)
+
+	} else {
+		// Command was successful
+		waitStatus = cmd.ProcessState.Sys().(syscall.WaitStatus)
+		klog.Infof(fmt.Sprintf("%d", waitStatus.ExitStatus()))
+
+		klog.Infof("successfully unmounted targetpath=%s", targetPath)
+		return nil
+	}
+
+}
+
+
 // func Mount(params mountParams, target string, opts ...string) error {
 func Mount(remote string, remotePath string, targetPath string, flags map[string]string) error {
-	mountCmd := "rclone"
+	mountCmd := "/usr/bin/rclone"
 	mountArgs := []string{}
 
 	defaultFlags := map[string]string{}
 	defaultFlags["allow-other"] = "true"
-	defaultFlags["allow-root"] = "true"
 
 	// rclone mount remote:path /path/to/mountpoint [flags]
 
     // mount runs in foreground and started as process
 	mountArgs = append(
 		mountArgs,
+        // required for exec, argv[0]
+		//mountCmd,
 		"mount",
 		fmt.Sprintf("%s:%s", remote, remotePath),
 		targetPath,
@@ -275,7 +314,7 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 		return err
 	}
 
-	klog.Infof("executing mount command cmd=%s, remote=%s:%s, targetpath=%s", mountCmd, remote, remotePath, targetPath)
+	klog.Infof("executing mount command cmd=%s, remote=%s:%s, options=%v, targetpath=%s", mountCmd, remote, remotePath, mountArgs, targetPath)
 
 	cmd := exec.Command(mountCmd, mountArgs...)
 	cmd.Env = env
@@ -285,6 +324,63 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 		return fmt.Errorf("mounting failed: %v cmd: '%s' remote: '%s:%s' targetpath: %s output: %q",
 			err, mountCmd, remote, remotePath, targetPath, string(out))
 	}
+
+
+	//err = syscall.Exec(mountCmd, mountArgs, env)
+
+    //procAttr := syscall.ProcAttr{
+    //    Env:   env,
+    //    Sys: &syscall.SysProcAttr{
+    //        Foreground: false,
+    //    },
+	//}
+	//_, err = syscall.ForkExec(mountCmd, mountArgs, &procAttr)
+
+	//if err != nil {
+	//	return fmt.Errorf("mounting failed: %v cmd: '%s' remote: '%s:%s' targetpath: %s output: %q",
+	//		err, mountCmd, remote, remotePath, targetPath)
+	//}
+
+	////var sysproc = &syscall.SysProcAttr{ Foreground:false, Noctty:true }
+	////var cred =  &syscall.Credential{ os.Getuid(), os.Getgid(), []uint32{} }
+	//var sysproc = &syscall.SysProcAttr {
+	//	/*Chroot:     "",
+	//	Credential: nil,
+	//	//Ptrace:     true,
+	//	Setsid:     false,
+	//	Setpgid:    false,
+	//	Setctty:    false,
+	//	Noctty:     false,
+	//	Ctty:       0,
+	//	Pdeathsig:  syscall.SIGCHLD,*/
+	//	Foreground: false,
+	//	Setsid:     true,
+	//}
+
+    //var procAttr = os.ProcAttr{
+	//	Dir: "/",
+	//	Env: env,
+	//	Files: []*os.File{
+	//		os.Stdin,
+	//		os.Stdout,
+	//		os.Stderr,
+	//    },
+    //    Sys: sysproc,
+    //}
+
+	//process, err := os.StartProcess(mountCmd, mountArgs, &procAttr)
+
+	//if err == nil {
+    //    err = process.Release()
+    //    if err != nil {
+	//		return fmt.Errorf("mounting failed - error releasing process: %v cmd: '%s' remote: '%s:%s' targetpath: %s output: %q",
+	//		err, mountCmd, remote, remotePath, targetPath)
+	//	}
+	//} else {
+	//	return fmt.Errorf("mounting failed - error mounting: %v cmd: '%s' remote: '%s:%s' targetpath: %s output: %q",
+	//		err, mountCmd, remote, remotePath, targetPath)
+	//}
+
 
 	iterations := 0
 	for {

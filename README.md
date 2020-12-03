@@ -118,7 +118,29 @@ Sources:
 
 
 
-<snip>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+------ snip, old readme for reference ------
 
 # CSI rclone mount plugin
 
