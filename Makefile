@@ -23,7 +23,7 @@ all: plugin container push
 
 plugin:
 	go mod download
-	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-X github.com/diseq/csi-rclone/pkg/rclone.DriverVersion=$(VERSION) -extldflags "-static"' -o _output/csi-rclone-plugin ./cmd/csi-rclone-plugin
+	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-X github.com/$(REGISTRY_NAME)/csi-rclone/pkg/rclone.DriverVersion=$(VERSION) -extldflags "-static"' -o _output/csi-rclone-plugin ./cmd/csi-rclone-plugin
 
 container:
 	docker build -t $(IMAGE_TAG) -f ./cmd/csi-rclone-plugin/Dockerfile .
