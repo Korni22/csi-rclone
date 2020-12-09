@@ -84,13 +84,13 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	// Load default connection settings from secret
 	secret, e := getSecret("rclone-secret")
 
-	remote, remotePath, flags, e := extractFlags(req.GetVolumeContext(), secret)
+	remote, remotePath, mountCommand, flags, e := extractFlags(req.GetVolumeContext(), secret)
 	if e != nil {
 		klog.Warningf("storage parameter error: %s", e)
 		return nil, e
 	}
 
-	e = Mount(remote, remotePath, targetPath, flags)
+	e = Mount(mountCommand, remote, remotePath, targetPath, flags)
 	if e != nil {
 		if os.IsPermission(e) {
 			return nil, status.Error(codes.PermissionDenied, e.Error())
@@ -104,7 +104,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func extractFlags(volumeContext map[string]string, secret *v1.Secret) (string, string, map[string]string, error) {
+func extractFlags(volumeContext map[string]string, secret *v1.Secret) (string, string, string, map[string]string, error) {
 
 	// Empty argument list
 	flags := make(map[string]string)
@@ -138,10 +138,17 @@ func extractFlags(volumeContext map[string]string, secret *v1.Secret) (string, s
 		delete(flags, "remotePathSuffix")
 	}
 
+	if mountCommand, ok := flags["mountCommand"]; ok {
+		delete(flags, "mountCommand")
+	}
+	else {
+		mountCommand = "mount"
+	}
+
 	delete(flags, "remote")
 	delete(flags, "remotePath")
 
-	return remote, remotePath, flags, nil
+	return remote, remotePath, mountCommand, flags, nil
 }
 
 func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -273,7 +280,7 @@ func Unmount(targetPath string) error {
 
 
 // func Mount(params mountParams, target string, opts ...string) error {
-func Mount(remote string, remotePath string, targetPath string, flags map[string]string) error {
+func Mount(mountCommand string, remote string, remotePath string, targetPath string, flags map[string]string) error {
 	mountCmd := "/usr/bin/rclone"
 	mountArgs := []string{}
 
@@ -287,7 +294,8 @@ func Mount(remote string, remotePath string, targetPath string, flags map[string
 		mountArgs,
         // required for exec, argv[0]
 		//mountCmd,
-		"mount",
+		//"mount",
+		mountCommand,
 		fmt.Sprintf("%s:%s", remote, remotePath),
 		targetPath,
 		"--daemon",
