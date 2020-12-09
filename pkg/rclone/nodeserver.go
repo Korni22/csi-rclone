@@ -139,7 +139,8 @@ func extractFlags(volumeContext map[string]string, secret *v1.Secret) (string, s
 		delete(flags, "remotePathSuffix")
 	}
 
-	if mountCommand, ok := flags["mountCommand"]; ok {
+	if flag, ok := flags["mountCommand"]; ok {
+		mountCommand = flag
 		delete(flags, "mountCommand")
 	}
 
