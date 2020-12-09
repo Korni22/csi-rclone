@@ -127,7 +127,7 @@ func extractFlags(volumeContext map[string]string, secret *v1.Secret) (string, s
 	}
 
 	if e := validateFlags(flags); e != nil {
-		return "", "", flags, e
+		return "", "", "", flags, e
 	}
 
 	remote := flags["remote"]
