@@ -87,7 +87,6 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	// secrets have to be in the csi-rclone namespaces
 	if secretName, ok := (req.GetVolumeContext())["secretName"]; ok {
 		// Load connection settings from secret
-		var e
 		secret, e = getSecret(secretName)
 	}
 
