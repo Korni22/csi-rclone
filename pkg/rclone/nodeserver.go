@@ -81,7 +81,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		mountOptions = append(mountOptions, "ro")
 	}
 
-	var secret
+	var secret v1.Secret
+	var e error
 
 	// secrets have to be in the csi-rclone namespaces
 	if secretName, ok := (req.GetVolumeContext())["secretName"]; ok {
