@@ -81,8 +81,11 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		mountOptions = append(mountOptions, "ro")
 	}
 
-	// Load default connection settings from secret
-	secret, e := getSecret("rclone-secret")
+	// secrets have to be in the csi-rclone namespaces
+	if secretName, ok := (req.GetVolumeContext())["secretName"]; ok {
+		// Load connection settings from secret
+		secret, e := getSecret(secretName)
+	}
 
 	remote, remotePath, mountCommand, flags, e := extractFlags(req.GetVolumeContext(), secret)
 	if e != nil {
@@ -146,6 +149,7 @@ func extractFlags(volumeContext map[string]string, secret *v1.Secret) (string, s
 
 	delete(flags, "remote")
 	delete(flags, "remotePath")
+	delete(flags, "secretName")
 
 	return remote, remotePath, mountCommand, flags, nil
 }
