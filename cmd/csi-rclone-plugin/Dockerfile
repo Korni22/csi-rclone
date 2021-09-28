@@ -1,4 +1,4 @@
-FROM alpine:3.9
+FROM alpine:3.13
 RUN apk add --no-cache ca-certificates bash fuse curl unzip tini
 
 RUN curl https://rclone.org/install.sh | bash
